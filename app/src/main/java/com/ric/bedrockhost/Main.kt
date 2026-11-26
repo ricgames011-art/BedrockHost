@@ -233,7 +233,6 @@ lateinit var ext: File
             result.add("Servidor $n: ${if (runningNow) "encendido" else "apagado"} · puerto $port")
         }
 
-        result.add("VanillaMine: pendiente de compilación y verificación ARM64")
         return result
     }
     fun readProps(n: String): MutableMap<String, String> {
@@ -355,13 +354,7 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("VanillaMine", fontSize = 20.sp)
-                Text("Estado: pendiente de compilación y pruebas ARM64.")
-                Text("Todavía no está disponible para instalación desde esta aplicación.")
-            }
-        }
+        
 
         Text("Los servidores deben estar detenidos antes de instalar o actualizar el motor.")
     }
@@ -389,12 +382,7 @@ class MainActivity : ComponentActivity() {
             }
         }
 
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(16.dp)) {
-                Text("VanillaMine", fontSize = 20.sp)
-                Text("Las actualizaciones estarán disponibles cuando exista una compilación ARM64 verificada.")
-            }
-        }
+        
     }
 }
 
@@ -572,13 +560,7 @@ class MainActivity : ComponentActivity() {
             Text("Comprobaciones y diagnóstico")
         }
 
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(12.dp)) {
-                Text("VanillaMine", fontSize = 18.sp)
-                Text("Instalación ARM64 pendiente de compilación y verificación.")
-                Text("No se sustituirá PocketMine automáticamente.")
-            }
-        }
+        
 
         if (showChecks) {
             AlertDialog(
