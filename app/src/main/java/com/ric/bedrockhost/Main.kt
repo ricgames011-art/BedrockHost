@@ -466,6 +466,59 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@Composable fun Home(open: (String) -> Unit) {
+    val st = Host.status; val ready = Host.ready
+    var names by remember { mutableStateOf(Host.names()) }
+    var nn by remember { mutableStateOf("") }; var np by remember { mutableStateOf("19132") }
+    var showChecks by remember { mutableStateOf(false) }
+    Column(Modifier.padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("BedrockHost", fontSize = 24.sp)
+        Text("Motor: " + (if (ready) "listo (PocketMine-MP)" else "no instalado") + if (st.isNotEmpty()) " · $st" else "")
+        OutlinedTextField(Host.phpUrl, { Host.phpUrl = it }, label = { Text("URL PHP Android arm64 (.tar.gz)") }, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(Host.pharUrl, { Host.pharUrl = it }, label = { Text("URL PocketMine-MP.phar") }, modifier = Modifier.fillMaxWidth())
+        Button({ Host.install() }) { Text(if (ready) "Reinstalar motor" else "Instalar motor") }
+        OutlinedButton({ showChecks = true }) {
+            Text("Comprobaciones y diagnóstico")
+        }
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(12.dp)) {
+                Text("VanillaMine", fontSize = 18.sp)
+                Text("Instalación ARM64 pendiente de compilación y verificación.")
+                Text("No se sustituirá PocketMine automáticamente.")
+            }
+        }
+        if (showChecks) {
+            AlertDialog(
+                onDismissRequest = { showChecks = false },
+                title = { Text("Diagnóstico de BedrockHost") },
+                text = {
+                    Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+                        Host.diagnostics().forEach {
+                            Text(it, fontSize = 13.sp, modifier = Modifier.padding(vertical = 3.dp))
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton({ showChecks = false }) { Text("Cerrar") }
+                }
+            )
+        }
+        Text("IP en tu Wi-Fi: " + Host.ips().joinToString())
+        HorizontalDivider()
+        names.forEach { n ->
+            val r = Host.running[n]?.alive == true
+            Card(Modifier.fillMaxWidth().clickable { open(n) }) {
+                Text("$n  ·  puerto ${Host.readProps(n)["server-port"] ?: "?"}  ·  " + if (r) "🟢 encendido" else "⚪ apagado", Modifier.padding(16.dp))
+            }
+        }
+        HorizontalDivider()
+        OutlinedTextField(nn, { nn = it.filter { c -> c.isLetterOrDigit() || c == '-' || c == '_' } }, label = { Text("Nombre del servidor nuevo") }, singleLine = true)
+        OutlinedTextField(np, { np = it.filter { c -> c.isDigit() } }, label = { Text("Puerto UDP") }, singleLine = true)
+        Button({ if (nn.isNotBlank()) { Host.create(nn, np.ifBlank { "19132" }); names = Host.names(); nn = "" } }) { Text("Crear servidor") }
+    }
+}
+
+
 @Composable fun Detail(n: String, back: () -> Unit) {
     val ctx = LocalContext.current; val s = Host.srv(n); var tab by remember { mutableStateOf(0) }
     Column {
