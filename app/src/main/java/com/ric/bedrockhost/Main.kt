@@ -138,14 +138,82 @@ lateinit var ext: File
         .filter { !it.isLoopbackAddress && it is Inet4Address }.map { it.hostAddress ?: "" }
     fun dl(u: String, f: File) { URL(u).openStream().use { i -> f.outputStream().use { o -> i.copyTo(o) } } }
     fun install() = thread {
+        val stage = File(root, "engine-staging")
         try {
-            engine.deleteRecursively(); engine.mkdirs()
-            status = "Descargando PHP…"; dl(phpUrl, File(engine, "php.tgz"))
-            status = "Extrayendo…"; ProcessBuilder("tar", "-xzf", "php.tgz").directory(engine).start().waitFor()
-            engine.walkTopDown().forEach { it.setExecutable(true, false) }
-            status = "Descargando PocketMine…"; dl(pharUrl, phar)
-            status = if (ready) "listo" else "No se encontró el binario php"
-        } catch (e: Exception) { status = "Error: " + e.message }
+            if (running.values.any { it.alive }) {
+                throw IllegalStateException("Detén todos los servidores antes de instalar o actualizar el motor")
+            }
+
+            status = "Preparando instalación segura…"
+            stage.deleteRecursively()
+            stage.mkdirs()
+
+            val archive = File(stage, "php.tgz")
+            status = "Descargando PHP…"
+            dl(phpUrl, archive)
+
+            status = "Extrayendo PHP…"
+            val tar = ProcessBuilder(
+                "tar", "-xzf", archive.absolutePath, "-C", stage.absolutePath
+            ).redirectErrorStream(true).start()
+            val tarOutput = tar.inputStream.bufferedReader().readText()
+            val tarCode = tar.waitFor()
+            if (tarCode != 0) {
+                throw IllegalStateException("Falló la extracción PHP: $tarOutput")
+            }
+
+            val phpFile = stage.walkTopDown()
+                .firstOrNull { it.isFile && it.name == "php" }
+                ?: throw IllegalStateException("No se encontró el binario PHP")
+
+            phpFile.setExecutable(true, false)
+
+            status = "Comprobando PHP…"
+            val phpTest = ProcessBuilder(phpFile.absolutePath, "-v")
+                .redirectErrorStream(true).start()
+            val phpOutput = phpTest.inputStream.bufferedReader().readText()
+            if (phpTest.waitFor() != 0) {
+                throw IllegalStateException("PHP no puede ejecutarse: $phpOutput")
+            }
+
+            status = "Descargando PocketMine…"
+            dl(pharUrl, File(stage, "PocketMine-MP.phar"))
+
+            val backup = File(root, "engine-backup-${System.currentTimeMillis()}")
+            if (engine.exists() && !engine.renameTo(backup)) {
+                throw IllegalStateException("No se pudo proteger el motor anterior")
+            }
+
+            if (!stage.renameTo(engine)) {
+                if (backup.exists()) backup.renameTo(engine)
+                throw IllegalStateException("No se pudo activar el motor nuevo")
+            }
+
+            status = "Instalación correcta. Motor anterior conservado en ${backup.name}"
+        } catch (e: Exception) {
+            stage.deleteRecursively()
+            status = "Error: ${e.message ?: e.javaClass.simpleName}"
+        }
+    }
+
+    fun diagnostics(): List<String> {
+        val result = mutableListOf<String>()
+        result.add("Directorio de datos: ${root.absolutePath}")
+        result.add("Directorio escribible: ${root.canWrite()}")
+        result.add("PHP encontrado: ${php != null}")
+        result.add("PHP ejecutable: ${php?.canExecute() == true}")
+        result.add("PocketMine PHAR encontrado: ${phar.exists()}")
+        result.add("Motor PocketMine preparado: $ready")
+        result.add("Direcciones IPv4: ${ips().joinToString().ifBlank { "No detectadas" }}")
+
+        names().forEach { n ->
+            val port = readProps(n)["server-port"] ?: "19132"
+            val runningNow = running[n]?.alive == true
+            result.add("Servidor $n: ${if (runningNow) "encendido" else "apagado"} · puerto $port")
+        }
+
+        result.add("VanillaMine: pendiente de compilación y verificación ARM64")
+        return result
     }
     fun readProps(n: String): MutableMap<String, String> {
         val m = linkedMapOf<String, String>()
@@ -205,12 +273,39 @@ class MainActivity : ComponentActivity() {
     val st = Host.status; val ready = Host.ready
     var names by remember { mutableStateOf(Host.names()) }
     var nn by remember { mutableStateOf("") }; var np by remember { mutableStateOf("19132") }
+    var showChecks by remember { mutableStateOf(false) }
     Column(Modifier.padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text("BedrockHost", fontSize = 24.sp)
         Text("Motor: " + (if (ready) "listo (PocketMine-MP)" else "no instalado") + if (st.isNotEmpty()) " · $st" else "")
         OutlinedTextField(Host.phpUrl, { Host.phpUrl = it }, label = { Text("URL PHP Android arm64 (.tar.gz)") }, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(Host.pharUrl, { Host.pharUrl = it }, label = { Text("URL PocketMine-MP.phar") }, modifier = Modifier.fillMaxWidth())
         Button({ Host.install() }) { Text(if (ready) "Reinstalar motor" else "Instalar motor") }
+        OutlinedButton({ showChecks = true }) {
+            Text("Comprobaciones y diagnóstico")
+        }
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(12.dp)) {
+                Text("VanillaMine", fontSize = 18.sp)
+                Text("Instalación ARM64 pendiente de compilación y verificación.")
+                Text("No se sustituirá PocketMine automáticamente.")
+            }
+        }
+        if (showChecks) {
+            AlertDialog(
+                onDismissRequest = { showChecks = false },
+                title = { Text("Diagnóstico de BedrockHost") },
+                text = {
+                    Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+                        Host.diagnostics().forEach {
+                            Text(it, fontSize = 13.sp, modifier = Modifier.padding(vertical = 3.dp))
+                        }
+                    }
+                },
+                confirmButton = {
+                    TextButton({ showChecks = false }) { Text("Cerrar") }
+                }
+            )
+        }
         Text("IP en tu Wi-Fi: " + Host.ips().joinToString())
         HorizontalDivider()
         names.forEach { n ->
