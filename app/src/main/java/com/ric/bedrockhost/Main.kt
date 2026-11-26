@@ -31,7 +31,7 @@ import kotlin.concurrent.thread
 
 class Srv(val name: String) {
     val log = mutableStateListOf<String>()
-    var proc: Process? = null
+    var proc: java.lang.Process? = null
     var alive by mutableStateOf(false)
     fun start() {
         if (alive) return
@@ -43,9 +43,14 @@ class Srv(val name: String) {
         thread {
             p.inputStream.bufferedReader().forEachLine { log.add(it); if (log.size > 500) log.removeAt(0) }
             alive = false
+}        
+   fun send(c: String) {
+    try {
+        proc?.getOutputStream()?.apply {
+            write((c + "\n").toByteArray())
+            flush()
         }
-    }
-    fun send(c: String) { try { proc?.outputStream?.apply { write((c + "\n").toByteArray()); flush() } } catch (_: Exception) {} }
+    } catch (_: Exception) {}
 }
 
 object Host {
