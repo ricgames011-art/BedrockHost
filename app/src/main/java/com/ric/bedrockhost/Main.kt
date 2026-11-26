@@ -121,6 +121,27 @@ class Srv(val name: String) {
 
 
 object Host {
+    fun deviceStats(): List<String> {
+        val runtime = Runtime.getRuntime()
+        val used = runtime.totalMemory() - runtime.freeMemory()
+        val max = runtime.maxMemory()
+
+        val activityManager = root.let {
+            android.os.Debug.getNativeHeapAllocatedSize()
+        }
+
+        val memoryInfo = android.os.Debug.MemoryInfo()
+        android.os.Debug.getMemoryInfo(memoryInfo)
+
+        return listOf(
+            "Memoria de la app: ${used / 1048576} MB",
+            "Límite de memoria de la app: ${max / 1048576} MB",
+            "Memoria nativa: ${activityManager / 1048576} MB",
+            "Memoria PSS: ${memoryInfo.totalPss / 1024} MB"
+        )
+    }
+
+
     lateinit var root: File
 lateinit var ext: File
     val running = HashMap<String, Srv>()
@@ -466,20 +487,91 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+
 @Composable fun Home(open: (String) -> Unit) {
-    val st = Host.status; val ready = Host.ready
+    val st = Host.status
+    val ready = Host.ready
+
     var names by remember { mutableStateOf(Host.names()) }
-    var nn by remember { mutableStateOf("") }; var np by remember { mutableStateOf("19132") }
+    var nn by remember { mutableStateOf("") }
+    var np by remember { mutableStateOf("19132") }
     var showChecks by remember { mutableStateOf(false) }
-    Column(Modifier.padding(16.dp).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("BedrockHost", fontSize = 24.sp)
-        Text("Motor: " + (if (ready) "listo (PocketMine-MP)" else "no instalado") + if (st.isNotEmpty()) " · $st" else "")
-        OutlinedTextField(Host.phpUrl, { Host.phpUrl = it }, label = { Text("URL PHP Android arm64 (.tar.gz)") }, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(Host.pharUrl, { Host.pharUrl = it }, label = { Text("URL PocketMine-MP.phar") }, modifier = Modifier.fillMaxWidth())
-        Button({ Host.install() }) { Text(if (ready) "Reinstalar motor" else "Instalar motor") }
+    var refresh by remember { mutableIntStateOf(0) }
+
+    LaunchedEffect(Unit) {
+        while (true) {
+            kotlinx.coroutines.delay(2000)
+            refresh++
+            names = Host.names()
+        }
+    }
+
+    val stats = Host.deviceStats()
+    val runningCount = Host.running.values.count { it.alive }
+    val ips = Host.ips().joinToString().ifBlank { "No disponible" }
+
+    Column(
+        Modifier.padding(16.dp).verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Text("BedrockHost", fontSize = 26.sp)
+        Text(
+            if (ready) "Motor PocketMine-MP preparado"
+            else "Motor no instalado"
+        )
+
+        Card(Modifier.fillMaxWidth()) {
+            Column(
+                Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text("Estado del dispositivo", fontSize = 18.sp)
+                stats.forEach {
+                    Text(it, fontSize = 14.sp)
+                }
+                Text("Actualización automática cada 2 segundos", fontSize = 11.sp)
+            }
+        }
+
+        Card(Modifier.fillMaxWidth()) {
+            Column(
+                Modifier.padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Text("Servidores", fontSize = 18.sp)
+                Text("Total: ${names.size}")
+                Text("En ejecución: $runningCount")
+                Text("IP local: $ips")
+            }
+        }
+
+        Text(
+            "Motor: " + (if (ready) "listo (PocketMine-MP)" else "no instalado") +
+                if (st.isNotEmpty()) " · $st" else ""
+        )
+
+        OutlinedTextField(
+            Host.phpUrl,
+            { Host.phpUrl = it },
+            label = { Text("URL PHP Android arm64 (.tar.gz)") },
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        OutlinedTextField(
+            Host.pharUrl,
+            { Host.pharUrl = it },
+            label = { Text("URL PocketMine-MP.phar") },
+            modifier = Modifier.fillMaxWidth()
+        )
+
+        Button({ Host.install() }) {
+            Text(if (ready) "Reinstalar motor" else "Instalar motor")
+        }
+
         OutlinedButton({ showChecks = true }) {
             Text("Comprobaciones y diagnóstico")
         }
+
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(12.dp)) {
                 Text("VanillaMine", fontSize = 18.sp)
@@ -487,37 +579,77 @@ class MainActivity : ComponentActivity() {
                 Text("No se sustituirá PocketMine automáticamente.")
             }
         }
+
         if (showChecks) {
             AlertDialog(
                 onDismissRequest = { showChecks = false },
                 title = { Text("Diagnóstico de BedrockHost") },
                 text = {
-                    Column(Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState())) {
+                    Column(
+                        Modifier.heightIn(max = 420.dp)
+                            .verticalScroll(rememberScrollState())
+                    ) {
                         Host.diagnostics().forEach {
-                            Text(it, fontSize = 13.sp, modifier = Modifier.padding(vertical = 3.dp))
+                            Text(
+                                it,
+                                fontSize = 13.sp,
+                                modifier = Modifier.padding(vertical = 3.dp)
+                            )
                         }
                     }
                 },
                 confirmButton = {
-                    TextButton({ showChecks = false }) { Text("Cerrar") }
+                    TextButton({ showChecks = false }) {
+                        Text("Cerrar")
+                    }
                 }
             )
         }
-        Text("IP en tu Wi-Fi: " + Host.ips().joinToString())
+
         HorizontalDivider()
+        Text("Tus servidores", fontSize = 18.sp)
+
         names.forEach { n ->
-            val r = Host.running[n]?.alive == true
-            Card(Modifier.fillMaxWidth().clickable { open(n) }) {
-                Text("$n  ·  puerto ${Host.readProps(n)["server-port"] ?: "?"}  ·  " + if (r) "🟢 encendido" else "⚪ apagado", Modifier.padding(16.dp))
+            val running = Host.running[n]?.alive == true
+            Card(
+                Modifier.fillMaxWidth().clickable { open(n) }
+            ) {
+                Text(
+                    "$n · puerto ${Host.readProps(n)["server-port"] ?: "?"} · " +
+                        if (running) "🟢 encendido" else "⚪ apagado",
+                    Modifier.padding(16.dp)
+                )
             }
         }
+
         HorizontalDivider()
-        OutlinedTextField(nn, { nn = it.filter { c -> c.isLetterOrDigit() || c == '-' || c == '_' } }, label = { Text("Nombre del servidor nuevo") }, singleLine = true)
-        OutlinedTextField(np, { np = it.filter { c -> c.isDigit() } }, label = { Text("Puerto UDP") }, singleLine = true)
-        Button({ if (nn.isNotBlank()) { Host.create(nn, np.ifBlank { "19132" }); names = Host.names(); nn = "" } }) { Text("Crear servidor") }
+        Text("Crear servidor", fontSize = 18.sp)
+
+        OutlinedTextField(
+            nn,
+            { nn = it.filter { c -> c.isLetterOrDigit() || c == '-' || c == '_' } },
+            label = { Text("Nombre del servidor nuevo") },
+            singleLine = true
+        )
+
+        OutlinedTextField(
+            np,
+            { np = it.filter { c -> c.isDigit() } },
+            label = { Text("Puerto UDP") },
+            singleLine = true
+        )
+
+        Button({
+            if (nn.isNotBlank()) {
+                Host.create(nn, np.ifBlank { "19132" })
+                names = Host.names()
+                nn = ""
+            }
+        }) {
+            Text("Crear servidor")
+        }
     }
 }
-
 
 @Composable fun Detail(n: String, back: () -> Unit) {
     val ctx = LocalContext.current; val s = Host.srv(n); var tab by remember { mutableStateOf(0) }
