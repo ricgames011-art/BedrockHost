@@ -41,21 +41,24 @@ class Srv(val name: String) {
             .directory(d).redirectErrorStream(true).start()
         proc = p; alive = true
         thread {
-            p.inputStream.bufferedReader().forEachLine { log.add(it); if (log.size > 500) log.removeAt(0) }
+            p.inputStream.bufferedReader().forEachLine { log.add(it); if (log.size > 500) log.removeAt(0) }            
             alive = false
-}        
-   fun send(c: String) {
-    try {
-        proc?.getOutputStream()?.apply {
-            write((c + "\n").toByteArray())
-            flush()
         }
-    } catch (_: Exception) {}
+    }
+
+    fun send(c: String) {
+        try {
+            proc?.getOutputStream()?.apply {
+                write((c + "\n").toByteArray())
+                flush()
+            }
+        } catch (_: Exception) {}
+    }
 }
 
+
 object Host {
-    lateinit var root: File
-    lateinit var ext: File
+    lateinit var root: File  lateinit var ext: File
     val running = HashMap<String, Srv>()
     fun srv(n: String) = running.getOrPut(n) { Srv(n) }
     var status by mutableStateOf("")
