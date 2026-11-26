@@ -58,7 +58,8 @@ class Srv(val name: String) {
 
 
 object Host {
-    lateinit var root: File  lateinit var ext: File
+    lateinit var root: File
+lateinit var ext: File
     val running = HashMap<String, Srv>()
     fun srv(n: String) = running.getOrPut(n) { Srv(n) }
     var status by mutableStateOf("")
