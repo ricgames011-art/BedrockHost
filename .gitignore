@@ -1,0 +1,7 @@
+.gradle/
+build/
+**/build/
+local.properties
+Main.kt.backup
+*.iml
+.idea/

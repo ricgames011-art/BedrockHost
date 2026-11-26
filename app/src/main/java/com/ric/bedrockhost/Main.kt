@@ -34,17 +34,80 @@ class Srv(val name: String) {
     var proc: java.lang.Process? = null
     var alive by mutableStateOf(false)
     fun start() {
-        if (alive) return
-        val d = Host.dir(name); File(d, "plugins").mkdirs()
-        val p = ProcessBuilder(Host.php!!.path, Host.phar.path, "--no-wizard", "--disable-ansi",
-            "--data=" + d.path, "--plugins=" + d.path + "/plugins")
-            .directory(d).redirectErrorStream(true).start()
-        proc = p; alive = true
-        thread {
-            p.inputStream.bufferedReader().forEachLine { log.add(it); if (log.size > 500) log.removeAt(0) }            
+    if (alive) {
+        log.add("El servidor ya está iniciado.")
+        return
+    }
+
+    thread {
+        try {
+            val d = Host.dir(name)
+            File(d, "plugins").mkdirs()
+
+            val php = Host.php
+            val phar = Host.phar
+
+            if (php == null || !php.exists()) {
+                log.add("ERROR: No se encuentra el ejecutable PHP.")
+                return@thread
+            }
+
+            if (!phar.exists()) {
+                log.add("ERROR: No se encuentra PocketMine-MP.phar.")
+                return@thread
+            }
+
+            if (!php.canExecute()) {
+                log.add("ERROR: PHP no tiene permisos de ejecución.")
+                return@thread
+            }
+
+            log.add("Iniciando servidor: $name")
+            log.add("PHP: ${php.absolutePath}")
+            log.add("PocketMine: ${phar.absolutePath}")
+            log.add("Directorio: ${d.absolutePath}")
+
+            val p = ProcessBuilder(
+                php.absolutePath,
+                phar.absolutePath,
+                "--no-wizard",
+                "--disable-ansi",
+                "--data=${d.absolutePath}",
+                "--plugins=${File(d, "plugins").absolutePath}"
+            )
+                .directory(d)
+                .redirectErrorStream(true)
+                .start()
+
+            proc = p
+            alive = true
+
+            log.add("Proceso iniciado. Esperando salida de consola...")
+
+            p.inputStream.bufferedReader().use { reader ->
+                var line: String?
+
+                while (reader.readLine().also { line = it } != null) {
+                    log.add(line ?: "")
+                    if (log.size > 500) {
+                        log.removeAt(0)
+                    }
+                }
+            }
+
+            val exitCode = p.waitFor()
+
+            log.add("El proceso terminó. Código de salida: $exitCode")
+
+        } catch (e: Exception) {
+            log.add("ERROR AL INICIAR: ${e.javaClass.simpleName}")
+            log.add(e.message ?: "Error sin descripción")
+        } finally {
             alive = false
+            proc = null
         }
     }
+}
 
     fun send(c: String) {
         try {
