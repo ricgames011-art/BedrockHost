@@ -25,6 +25,10 @@ import java.io.File
 import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.net.URL
+import java.net.HttpURLConnection
+import java.io.FileOutputStream
+import java.util.zip.GZIPInputStream
+import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kotlin.concurrent.thread
@@ -157,7 +161,114 @@ lateinit var ext: File
     fun names() = File(root, "servers").apply { mkdirs() }.listFiles()?.filter { it.isDirectory }?.map { it.name }?.sorted() ?: emptyList()
     fun ips() = NetworkInterface.getNetworkInterfaces().toList().flatMap { it.inetAddresses.toList() }
         .filter { !it.isLoopbackAddress && it is Inet4Address }.map { it.hostAddress ?: "" }
-    fun dl(u: String, f: File) { URL(u).openStream().use { i -> f.outputStream().use { o -> i.copyTo(o) } } }
+    fun dl(u: String, f: File, repoPath: String) {
+        var current = URL(u)
+
+        require(current.protocol == "https" &&
+                current.host == "github.com" &&
+                current.path.startsWith(repoPath) &&
+                current.userInfo == null) {
+            "URL no autorizada. Usa una descarga del repositorio oficial."
+        }
+
+        repeat(6) { attempt ->
+            require(current.protocol == "https" &&
+                    current.host in setOf(
+                        "github.com",
+                        "release-assets.githubusercontent.com",
+                        "objects.githubusercontent.com"
+                    ) &&
+                    current.userInfo == null) {
+                "Redirección a un servidor no autorizado"
+            }
+
+            val connection = current.openConnection() as HttpURLConnection
+            connection.instanceFollowRedirects = false
+            connection.connectTimeout = 15000
+            connection.readTimeout = 60000
+
+            try {
+                val code = connection.responseCode
+
+                if (code in 300..399) {
+                    val location = connection.getHeaderField("Location")
+                        ?: throw IllegalStateException("Redirección sin destino")
+                    if (attempt == 5) throw IllegalStateException("Demasiadas redirecciones")
+                    current = URL(current, location)
+                } else {
+                    if (code != HttpURLConnection.HTTP_OK) {
+                        throw IllegalStateException("Error HTTP: $code")
+                    }
+
+                    f.parentFile?.mkdirs()
+                    connection.inputStream.use { input ->
+                        f.outputStream().use { output ->
+                            input.copyTo(output)
+                        }
+                    }
+                    return
+                }
+            } finally {
+                connection.disconnect()
+            }
+        }
+    }
+
+    fun extractTarSafely(archive: File, destination: File) {
+        val base = destination.canonicalFile
+        val basePrefix = base.path + File.separator
+
+        TarArchiveInputStream(
+            GZIPInputStream(archive.inputStream().buffered())
+        ).use { tar ->
+            while (true) {
+                val entry = tar.nextTarEntry ?: break
+                val name = entry.name.replace('\\', '/')
+
+                require(!name.startsWith("/") &&
+                        name.split('/').none { it == ".." } &&
+                        !name.contains("\\u0000")) {
+                    "Archivo TAR con una ruta no permitida"
+                }
+
+                require(!entry.isSymbolicLink && !entry.isLink) {
+                    "El archivo TAR contiene enlaces no permitidos"
+                }
+
+                require(entry.isDirectory || entry.isFile) {
+                    "El archivo TAR contiene un tipo de archivo no permitido"
+                }
+
+                val output = File(base, name).canonicalFile
+                require(output.path == base.path ||
+                        output.path.startsWith(basePrefix)) {
+                    "El archivo TAR intenta salir de la carpeta de instalación"
+                }
+
+                if (entry.isDirectory) {
+                    output.mkdirs()
+                } else {
+                    output.parentFile?.mkdirs()
+                    FileOutputStream(output).use { stream ->
+                        var remaining = entry.size
+                        val buffer = ByteArray(8192)
+
+                        while (remaining > 0) {
+                            val count = tar.read(
+                                buffer, 0,
+                                minOf(buffer.size.toLong(), remaining).toInt()
+                            )
+                            if (count < 0) {
+                                throw IllegalStateException("Archivo TAR incompleto")
+                            }
+                            stream.write(buffer, 0, count)
+                            remaining -= count
+                        }
+                    }
+                }
+            }
+        }
+    }
     fun install() = thread {
         val stage = File(root, "engine-staging")
         try {
@@ -171,17 +282,10 @@ lateinit var ext: File
 
             val archive = File(stage, "php.tgz")
             status = "Descargando PHP…"
-            dl(phpUrl, archive)
+            dl(phpUrl, archive, "/pmmp/PHP-Binaries/releases/")
 
             status = "Extrayendo PHP…"
-            val tar = ProcessBuilder(
-                "tar", "-xzf", archive.absolutePath, "-C", stage.absolutePath
-            ).redirectErrorStream(true).start()
-            val tarOutput = tar.inputStream.bufferedReader().readText()
-            val tarCode = tar.waitFor()
-            if (tarCode != 0) {
-                throw IllegalStateException("Falló la extracción PHP: $tarOutput")
-            }
+            extractTarSafely(archive, stage)
 
             val phpFile = stage.walkTopDown()
                 .firstOrNull { it.isFile && it.name == "php" }
@@ -198,7 +302,7 @@ lateinit var ext: File
             }
 
             status = "Descargando PocketMine…"
-            dl(pharUrl, File(stage, "PocketMine-MP.phar"))
+            dl(pharUrl, File(stage, "PocketMine-MP.phar"), "/pmmp/PocketMine-MP/releases/")
 
             val backup = File(root, "engine-backup-${System.currentTimeMillis()}")
             if (engine.exists() && !engine.renameTo(backup)) {
